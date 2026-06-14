@@ -14,7 +14,7 @@ import apache_beam as beam
 from apache_beam.testing.test_pipeline import TestPipeline
 from apache_beam.testing.util import assert_that, equal_to
 
-from pipeline import ParseAndValidateTxDoFn, StatefulFeatureDoFn, VertexAIInferenceDoFn, FormatForBigQueryFn
+from pipeline import ParseAndValidateTxDoFn, StatefulFeatureDoFn, VertexAIInferenceDoFn, FormatForBigQueryFn, FormatForFraudAlertsFn
 
 
 class DataflowPipelineTest(unittest.TestCase):
@@ -290,6 +290,36 @@ class DataflowPipelineTest(unittest.TestCase):
                 self.assertIn('processed_timestamp', row)
 
             assert_that(formatted, check_bq_mapping)
+
+    def test_format_for_fraud_alerts(self):
+        """Verifies that format step maps fraud alert fields correctly."""
+        enriched_event = {
+            **self.valid_event,
+            "tx_count_10m": 3,
+            "tx_sum_10m": 72.50,
+            "impossible_travel": 1,
+            "fraud_probability": 0.95,
+            "is_fraud": True,
+            "model_version": "vertex-ai-endpoint"
+        }
+        
+        with TestPipeline() as p:
+            input_pcoll = p | beam.Create([enriched_event])
+            formatted = input_pcoll | beam.ParDo(FormatForFraudAlertsFn())
+            
+            def check_alerts_mapping(rows):
+                self.assertEqual(len(rows), 1)
+                row = rows[0]
+                self.assertEqual(row['transaction_id'], self.valid_event['transaction_id'])
+                self.assertEqual(row['timestamp'], self.valid_event['timestamp'])
+                self.assertEqual(row['card_id'], self.valid_event['card_id'])
+                self.assertEqual(row['amount'], self.valid_event['amount'])
+                self.assertEqual(row['merchant_id'], self.valid_event['merchant_id'])
+                self.assertEqual(row['fraud_probability'], 0.95)
+                self.assertNotIn('location', row)
+                self.assertIn('processed_timestamp', row)
+
+            assert_that(formatted, check_alerts_mapping)
 
 
 if __name__ == '__main__':

@@ -324,6 +324,31 @@ class FormatForBigQueryFn(beam.DoFn):
         yield formatted_row
 
 
+class FormatForFraudAlertsFn(beam.DoFn):
+    """
+    Formats the fraud transaction dictionary to match the BigQuery fraud_alerts schema.
+    """
+    def process(self, element: Dict):
+        now_iso = datetime.datetime.now(datetime.timezone.utc).isoformat()
+        
+        fraud_prob = element.get("fraud_probability")
+        if fraud_prob is not None:
+            fraud_prob = float(fraud_prob)
+        else:
+            fraud_prob = 0.0
+
+        formatted_row = {
+            "transaction_id": element["transaction_id"],
+            "timestamp": element["timestamp"],
+            "card_id": element["card_id"],
+            "amount": float(element["amount"]),
+            "merchant_id": element["merchant_id"],
+            "fraud_probability": fraud_prob,
+            "processed_timestamp": now_iso
+        }
+        yield formatted_row
+
+
 def run():
     parser = argparse.ArgumentParser()
     parser.add_argument(
@@ -335,6 +360,11 @@ def run():
         '--output_table',
         required=True,
         help='BigQuery table destination (format: project:dataset.table)'
+    )
+    parser.add_argument(
+        '--fraud_alerts_table',
+        default=None,
+        help='BigQuery table destination for fraud alerts (format: project:dataset.table)'
     )
     parser.add_argument(
         '--dlq_topic',
@@ -359,6 +389,16 @@ def run():
     
     with open(known_args.schema_path, "r") as f:
         schema_json_str = f.read()
+
+    # Derive fraud_alerts table from output_table if not explicitly provided
+    if known_args.fraud_alerts_table:
+        fraud_alerts_table = known_args.fraud_alerts_table
+    else:
+        if 'raw_transactions' in known_args.output_table:
+            fraud_alerts_table = known_args.output_table.replace('raw_transactions', 'fraud_alerts')
+        else:
+            parts = known_args.output_table.rsplit('.', 1)
+            fraud_alerts_table = f"{parts[0]}.fraud_alerts"
 
     pipeline_options = PipelineOptions(pipeline_args)
     pipeline_options.view_as(StandardOptions).streaming = True
@@ -406,7 +446,7 @@ def run():
             | "VertexAIInference" >> beam.ParDo(VertexAIInferenceDoFn(known_args.endpoint_id))
         )
 
-        # 6. Format and write enriched events to BigQuery
+        # 6. Format and write enriched events to BigQuery (raw_transactions)
         _ = (
             scored_transactions
             | "FormatForBigQuery" >> beam.ParDo(FormatForBigQueryFn())
@@ -417,7 +457,19 @@ def run():
             )
         )
 
-        # 7. Route invalid events to DLQ
+        # 7. Filter, format, and write fraud alerts to BigQuery (fraud_alerts)
+        _ = (
+            scored_transactions
+            | "FilterFraudulent" >> beam.Filter(lambda ev: ev.get("is_fraud") is True)
+            | "FormatForFraudAlerts" >> beam.ParDo(FormatForFraudAlertsFn())
+            | "WriteToFraudAlerts" >> beam.io.WriteToBigQuery(
+                table=fraud_alerts_table,
+                write_disposition=beam.io.BigQueryDisposition.WRITE_APPEND,
+                create_disposition=beam.io.BigQueryDisposition.CREATE_NEVER
+            )
+        )
+
+        # 8. Route invalid events to DLQ
         _ = (
             invalid_tx
             | "WriteToDLQ" >> beam.io.WriteToPubSub(topic=known_args.dlq_topic)
