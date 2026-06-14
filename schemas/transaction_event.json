@@ -1,0 +1,77 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "TransactionEvent",
+  "type": "object",
+  "properties": {
+    "transaction_id": {
+      "type": "string",
+      "format": "uuid",
+      "description": "Unique identifier for the transaction event."
+    },
+    "timestamp": {
+      "type": "string",
+      "format": "date-time",
+      "description": "ISO 8601 formatted timestamp indicating when the transaction occurred."
+    },
+    "card_id": {
+      "type": "string",
+      "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$",
+      "description": "Unique UUID identifying the credit card or account."
+    },
+    "amount": {
+      "type": "number",
+      "minimum": 0.01,
+      "description": "The transaction amount. Must be a positive decimal."
+    },
+    "merchant_id": {
+      "type": "string",
+      "description": "Unique identifier for the merchant."
+    },
+    "merchant_category": {
+      "type": "string",
+      "enum": [
+        "retail",
+        "grocery",
+        "entertainment",
+        "travel",
+        "dining",
+        "gas_station",
+        "online_shopping",
+        "other"
+      ],
+      "description": "The category classification of the merchant."
+    },
+    "location": {
+      "type": "object",
+      "properties": {
+        "latitude": {
+          "type": "number",
+          "minimum": -90.0,
+          "maximum": 90.0
+        },
+        "longitude": {
+          "type": "number",
+          "minimum": -180.0,
+          "maximum": 180.0
+        }
+      },
+      "required": ["latitude", "longitude"],
+      "additionalProperties": false,
+      "description": "Geographical location coordinates where the transaction was executed."
+    },
+    "device_id": {
+      "type": "string",
+      "description": "The identifier of the terminal or device used for the transaction."
+    }
+  },
+  "required": [
+    "transaction_id",
+    "timestamp",
+    "card_id",
+    "amount",
+    "merchant_id",
+    "merchant_category",
+    "location"
+  ],
+  "additionalProperties": false
+}
